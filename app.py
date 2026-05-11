@@ -8,46 +8,53 @@ import os
 app = Flask(__name__, static_folder='static')
 CORS(app)  # Разрешаем запросы с клиента
 
-DATABASE = 'party.db'
+# Используем /tmp для базы данных на Render.com (эфемерное хранилище)
+DATABASE = os.path.join('/tmp', 'party.db') if os.path.exists('/tmp') else 'party.db'
 
 # Инициализация базы данных
 def init_db():
-    conn = sqlite3.connect(DATABASE)
-    c = conn.cursor()
-    
-    # Таблица пати
-    c.execute('''CREATE TABLE IF NOT EXISTS parties (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE NOT NULL,
-        leader TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-    
-    # Таблица участников
-    c.execute('''CREATE TABLE IF NOT EXISTS party_members (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        party_id INTEGER NOT NULL,
-        player_id TEXT NOT NULL,
-        x REAL DEFAULT 0,
-        y REAL DEFAULT 0,
-        z REAL DEFAULT 0,
-        last_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (party_id) REFERENCES parties(id) ON DELETE CASCADE,
-        UNIQUE(party_id, player_id)
-    )''')
-    
-    # Таблица приглашений
-    c.execute('''CREATE TABLE IF NOT EXISTS invites (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        party_id INTEGER NOT NULL,
-        target_player TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (party_id) REFERENCES parties(id) ON DELETE CASCADE,
-        UNIQUE(party_id, target_player)
-    )''')
-    
-    conn.commit()
-    conn.close()
+    try:
+        print(f"[Party] Инициализация базы данных: {DATABASE}")
+        conn = sqlite3.connect(DATABASE)
+        c = conn.cursor()
+        
+        # Таблица пати
+        c.execute('''CREATE TABLE IF NOT EXISTS parties (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            leader TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+        
+        # Таблица участников
+        c.execute('''CREATE TABLE IF NOT EXISTS party_members (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            party_id INTEGER NOT NULL,
+            player_id TEXT NOT NULL,
+            x REAL DEFAULT 0,
+            y REAL DEFAULT 0,
+            z REAL DEFAULT 0,
+            last_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (party_id) REFERENCES parties(id) ON DELETE CASCADE,
+            UNIQUE(party_id, player_id)
+        )''')
+        
+        # Таблица приглашений
+        c.execute('''CREATE TABLE IF NOT EXISTS invites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            party_id INTEGER NOT NULL,
+            target_player TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (party_id) REFERENCES parties(id) ON DELETE CASCADE,
+            UNIQUE(party_id, target_player)
+        )''')
+        
+        conn.commit()
+        conn.close()
+        print("[Party] База данных успешно инициализирована")
+    except Exception as e:
+        print(f"[Party] Ошибка инициализации базы данных: {e}")
+        raise
 
 def get_db():
     conn = sqlite3.connect(DATABASE)
@@ -488,7 +495,14 @@ def get_stats():
         return jsonify({'error': str(e)}), 500
 
 # Инициализируем базу данных при запуске приложения
+print("[Party] Запуск Party API Server...")
+print(f"[Party] Путь к базе данных: {DATABASE}")
 init_db()
+print("[Party] Сервер готов к работе!")
 
 if __name__ == '__main__':
-
+    # Для разработки
+    app.run(host='0.0.0.0', port=5000, debug=True)
+    
+    # Для продакшена используйте gunicorn:
+    # gunicorn -w 4 -b 0.0.0.0:5000 app:app
