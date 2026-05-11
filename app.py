@@ -487,10 +487,11 @@ def get_stats():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# Инициализируем базу данных при запуске приложения
+init_db()
+
 if __name__ == '__main__':
-    init_db()
     # Для разработки
     app.run(host='0.0.0.0', port=5000, debug=True)
-    
-    # Для продакшена используйте gunicorn:
+
     # gunicorn -w 4 -b 0.0.0.0:5000 app:app
