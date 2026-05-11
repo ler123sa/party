@@ -465,8 +465,26 @@ def add_waypoint():
                      VALUES (?, ?, ?, ?, ?, ?)''', 
                   (party_id, name, player, x, y, z))
         
+        waypoint_id = c.lastrowid
+        
         conn.commit()
         conn.close()
+        
+        # Запланировать удаление метки через 10 секунд
+        import threading
+        def delete_waypoint_after_delay():
+            import time
+            time.sleep(10)
+            try:
+                conn = get_db()
+                c = conn.cursor()
+                c.execute('DELETE FROM party_waypoints WHERE id = ?', (waypoint_id,))
+                conn.commit()
+                conn.close()
+            except:
+                pass
+        
+        threading.Thread(target=delete_waypoint_after_delay, daemon=True).start()
         
         return jsonify({'success': True, 'message': f'Waypoint {name} added'})
     except Exception as e:
