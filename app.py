@@ -291,8 +291,19 @@ def disband_party():
             conn.close()
             return jsonify({'error': 'You are not a party leader'}), 403
         
-        # Удаляем пати (каскадно удалятся участники и приглашения)
-        c.execute('DELETE FROM parties WHERE id = ?', (party['id'],))
+        party_id = party['id']
+        
+        # Удаляем всех участников
+        c.execute('DELETE FROM party_members WHERE party_id = ?', (party_id,))
+        
+        # Удаляем все приглашения
+        c.execute('DELETE FROM invites WHERE party_id = ?', (party_id,))
+        
+        # Удаляем все метки
+        c.execute('DELETE FROM party_waypoints WHERE party_id = ?', (party_id,))
+        
+        # Удаляем пати
+        c.execute('DELETE FROM parties WHERE id = ?', (party_id,))
         
         conn.commit()
         conn.close()
