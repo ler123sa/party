@@ -255,13 +255,14 @@ def leave_party():
         party_id = result['party_id']
         leader = result['leader']
         
-        # Если игрок - лидер, распускаем пати
+        # Если игрок - лидер, запрещаем leave (должен использовать disband)
         if player == leader:
-            c.execute('DELETE FROM parties WHERE id = ?', (party_id,))
-        else:
-            # Просто удаляем игрока
-            c.execute('DELETE FROM party_members WHERE party_id = ? AND player_id = ?', 
-                      (party_id, player))
+            conn.close()
+            return jsonify({'error': 'You are the leader. Use .party disband instead'}), 403
+        
+        # Удаляем игрока из пати
+        c.execute('DELETE FROM party_members WHERE party_id = ? AND player_id = ?', 
+                  (party_id, player))
         
         conn.commit()
         conn.close()
