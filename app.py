@@ -49,6 +49,19 @@ def init_db():
             UNIQUE(party_id, target_player)
         )''')
         
+        # Таблица меток пати
+        c.execute('''CREATE TABLE IF NOT EXISTS party_waypoints (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            party_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            creator TEXT NOT NULL,
+            x REAL NOT NULL,
+            y REAL NOT NULL,
+            z REAL NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (party_id) REFERENCES parties(id) ON DELETE CASCADE
+        )''')
+        
         conn.commit()
         conn.close()
         print("[Party] База данных успешно инициализирована")
@@ -420,6 +433,131 @@ def cleanup():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# Добавить метку в пати
+@app.route('/party/waypoint/add', methods=['POST'])
+def add_waypoint():
+    data = request.json
+    player = data.get('player')
+    name = data.get('name')
+    x = data.get('x')
+    y = data.get('y')
+    z = data.get('z')
+    
+    if not all([player, name, x is not None, y is not None, z is not None]):
+        return jsonify({'error': 'Missing required fields'}), 400
+    
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        # Находим пати игрока
+        c.execute('SELECT party_id FROM party_members WHERE player_id = ?', (player,))
+        result = c.fetchone()
+        
+        if not result:
+            conn.close()
+            return jsonify({'error': 'Not in a party'}), 400
+        
+        party_id = result['party_id']
+        
+        # Добавляем метку
+        c.execute('''INSERT INTO party_waypoints (party_id, name, creator, x, y, z) 
+                     VALUES (?, ?, ?, ?, ?, ?)''', 
+                  (party_id, name, player, x, y, z))
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'success': True, 'message': f'Waypoint {name} added'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# Получить метки пати
+@app.route('/party/waypoint/list', methods=['POST'])
+def list_waypoints():
+    data = request.json
+    player = data.get('player')
+    
+    if not player:
+        return jsonify({'error': 'Missing player'}), 400
+    
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        # Находим пати игрока
+        c.execute('SELECT party_id FROM party_members WHERE player_id = ?', (player,))
+        result = c.fetchone()
+        
+        if not result:
+            conn.close()
+            return jsonify({'waypoints': []})
+        
+        party_id = result['party_id']
+        
+        # Получаем все метки пати
+        c.execute('''SELECT name, creator, x, y, z, created_at 
+                     FROM party_waypoints 
+                     WHERE party_id = ? 
+                     ORDER BY created_at DESC''', (party_id,))
+        
+        waypoints = []
+        for row in c.fetchall():
+            waypoints.append({
+                'name': row['name'],
+                'creator': row['creator'],
+                'x': row['x'],
+                'y': row['y'],
+                'z': row['z'],
+                'timestamp': row['created_at']
+            })
+        
+        conn.close()
+        
+        return jsonify({'waypoints': waypoints})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# Удалить метку
+@app.route('/party/waypoint/remove', methods=['POST'])
+def remove_waypoint():
+    data = request.json
+    player = data.get('player')
+    name = data.get('name')
+    
+    if not player or not name:
+        return jsonify({'error': 'Missing player or name'}), 400
+    
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        # Находим пати игрока
+        c.execute('SELECT party_id FROM party_members WHERE player_id = ?', (player,))
+        result = c.fetchone()
+        
+        if not result:
+            conn.close()
+            return jsonify({'error': 'Not in a party'}), 400
+        
+        party_id = result['party_id']
+        
+        # Удаляем метку (только свою или если лидер)
+        c.execute('''DELETE FROM party_waypoints 
+                     WHERE party_id = ? AND name = ? AND creator = ?''', 
+                  (party_id, name, player))
+        
+        if c.rowcount == 0:
+            conn.close()
+            return jsonify({'error': 'Waypoint not found or not yours'}), 400
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'success': True, 'message': f'Waypoint {name} removed'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 # Главная страница (для проверки)
 @app.route('/')
 def index():
@@ -436,7 +574,10 @@ def index():
             'POST /party/disband',
             'POST /party/kick',
             'POST /party/list',
-            'POST /party/state'
+            'POST /party/state',
+            'POST /party/waypoint/add',
+            'POST /party/waypoint/list',
+            'POST /party/waypoint/remove'
         ]
     })
 
