@@ -445,17 +445,15 @@ def cleanup():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# Добавить метку в пати
+# Добавить метку на сущность
 @app.route('/party/waypoint/add', methods=['POST'])
 def add_waypoint():
     data = request.json
     player = data.get('player')
-    name = data.get('name')
-    x = data.get('x')
-    y = data.get('y')
-    z = data.get('z')
+    entity_id = data.get('entityId')
+    entity_name = data.get('entityName')
     
-    if not all([player, name, x is not None, y is not None, z is not None]):
+    if not all([player, entity_id, entity_name]):
         return jsonify({'error': 'Missing required fields'}), 400
     
     try:
@@ -476,21 +474,21 @@ def add_waypoint():
         c.execute('DELETE FROM party_waypoints WHERE party_id = ? AND creator = ?', 
                   (party_id, player))
         
-        # Добавляем метку
+        # Добавляем метку на сущность
         c.execute('''INSERT INTO party_waypoints (party_id, name, creator, x, y, z) 
                      VALUES (?, ?, ?, ?, ?, ?)''', 
-                  (party_id, name, player, x, y, z))
+                  (party_id, entity_id, player, 0, 0, 0))  # x,y,z не используются, храним entityId в name
         
         waypoint_id = c.lastrowid
         
         conn.commit()
         conn.close()
         
-        # Запланировать удаление метки через 10 секунд
+        # Запланировать удаление метки через 20 секунд
         import threading
         def delete_waypoint_after_delay():
             import time
-            time.sleep(10)
+            time.sleep(20)
             try:
                 conn = get_db()
                 c = conn.cursor()
@@ -502,7 +500,7 @@ def add_waypoint():
         
         threading.Thread(target=delete_waypoint_after_delay, daemon=True).start()
         
-        return jsonify({'success': True, 'message': f'Waypoint {name} added'})
+        return jsonify({'success': True, 'message': f'Waypoint on {entity_name} added'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -529,8 +527,8 @@ def list_waypoints():
         
         party_id = result['party_id']
         
-        # Получаем все метки пати
-        c.execute('''SELECT name, creator, x, y, z, created_at 
+        # Получаем все метки пати (name содержит entityId)
+        c.execute('''SELECT name, creator, created_at 
                      FROM party_waypoints 
                      WHERE party_id = ? 
                      ORDER BY created_at DESC''', (party_id,))
@@ -538,11 +536,9 @@ def list_waypoints():
         waypoints = []
         for row in c.fetchall():
             waypoints.append({
-                'name': row['name'],
+                'entityId': row['name'],      # entityId хранится в поле name
+                'entityName': 'Entity',       # Имя будет определяться на клиенте
                 'creator': row['creator'],
-                'x': row['x'],
-                'y': row['y'],
-                'z': row['z'],
                 'timestamp': row['created_at']
             })
         
