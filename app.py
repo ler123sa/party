@@ -491,7 +491,4 @@ def get_stats():
 init_db()
 
 if __name__ == '__main__':
-    # Для разработки
-    app.run(host='0.0.0.0', port=5000, debug=True)
 
-    # gunicorn -w 4 -b 0.0.0.0:5000 app:app
