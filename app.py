@@ -460,6 +460,10 @@ def add_waypoint():
         
         party_id = result['party_id']
         
+        # Удаляем все старые метки этого игрока в этом пати
+        c.execute('DELETE FROM party_waypoints WHERE party_id = ? AND creator = ?', 
+                  (party_id, player))
+        
         # Добавляем метку
         c.execute('''INSERT INTO party_waypoints (party_id, name, creator, x, y, z) 
                      VALUES (?, ?, ?, ?, ?, ?)''', 
