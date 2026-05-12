@@ -445,15 +445,18 @@ def cleanup():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# Добавить метку на сущность
+# Добавить метку (на сущность или координаты)
 @app.route('/party/waypoint/add', methods=['POST'])
 def add_waypoint():
     data = request.json
     player = data.get('player')
-    entity_id = data.get('entityId')
-    entity_name = data.get('entityName')
+    name = data.get('name')
+    entity_id = data.get('entityId')  # Опционально
+    x = data.get('x')
+    y = data.get('y')
+    z = data.get('z')
     
-    if not all([player, entity_id, entity_name]):
+    if not all([player, name, x is not None, y is not None, z is not None]):
         return jsonify({'error': 'Missing required fields'}), 400
     
     try:
@@ -474,10 +477,11 @@ def add_waypoint():
         c.execute('DELETE FROM party_waypoints WHERE party_id = ? AND creator = ?', 
                   (party_id, player))
         
-        # Добавляем метку на сущность
+        # Добавляем метку (entityId опционально, храним в name если есть)
+        waypoint_name = entity_id if entity_id else name
         c.execute('''INSERT INTO party_waypoints (party_id, name, creator, x, y, z) 
                      VALUES (?, ?, ?, ?, ?, ?)''', 
-                  (party_id, entity_id, player, 0, 0, 0))  # x,y,z не используются, храним entityId в name
+                  (party_id, waypoint_name, player, x, y, z))
         
         waypoint_id = c.lastrowid
         
@@ -500,7 +504,7 @@ def add_waypoint():
         
         threading.Thread(target=delete_waypoint_after_delay, daemon=True).start()
         
-        return jsonify({'success': True, 'message': f'Waypoint on {entity_name} added'})
+        return jsonify({'success': True, 'message': f'Waypoint added'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -527,18 +531,33 @@ def list_waypoints():
         
         party_id = result['party_id']
         
-        # Получаем все метки пати (name содержит entityId)
-        c.execute('''SELECT name, creator, created_at 
+        # Получаем все метки пати
+        c.execute('''SELECT name, creator, x, y, z, created_at 
                      FROM party_waypoints 
                      WHERE party_id = ? 
                      ORDER BY created_at DESC''', (party_id,))
         
         waypoints = []
         for row in c.fetchall():
+            # Проверяем это entityId (UUID формат) или обычное имя
+            waypoint_name = row['name']
+            entity_id = None
+            try:
+                # Пытаемся распарсить как UUID
+                import uuid
+                uuid.UUID(waypoint_name)
+                entity_id = waypoint_name
+                waypoint_name = 'Entity'
+            except:
+                pass
+            
             waypoints.append({
-                'entityId': row['name'],      # entityId хранится в поле name
-                'entityName': 'Entity',       # Имя будет определяться на клиенте
+                'entityId': entity_id,
+                'name': waypoint_name,
                 'creator': row['creator'],
+                'x': row['x'],
+                'y': row['y'],
+                'z': row['z'],
                 'timestamp': row['created_at']
             })
         
