@@ -1,21 +1,52 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, g
 from flask_cors import CORS
 from datetime import datetime, timedelta
 import sqlite3
 import json
 import os
+import time
 
 app = Flask(__name__, static_folder='static')
-CORS(app)  # Разрешаем запросы с клиента
+CORS(app)
 
-# Используем /tmp для базы данных на Render.com (эфемерное хранилище)
 DATABASE = os.path.join('/tmp', 'party.db') if os.path.exists('/tmp') else 'party.db'
+
+def get_db():
+    """Возвращает соединение с БД привязанное к текущему запросу Flask."""
+    if 'db' not in g:
+        g.db = sqlite3.connect(DATABASE, timeout=30, check_same_thread=False)
+        g.db.row_factory = sqlite3.Row
+        g.db.execute("PRAGMA journal_mode=WAL")
+        g.db.execute("PRAGMA synchronous=NORMAL")
+        g.db.execute("PRAGMA busy_timeout=30000")
+    return g.db
+
+@app.teardown_appcontext
+def close_db(error):
+    """Закрываем соединение после каждого запроса."""
+    db = g.pop('db', None)
+    if db is not None:
+        db.close()
+
+def execute_with_retry(conn, sql, params=(), retries=5, delay=0.1):
+    """Выполняет SQL с повторными попытками при блокировке."""
+    for attempt in range(retries):
+        try:
+            return conn.execute(sql, params)
+        except sqlite3.OperationalError as e:
+            if 'locked' in str(e) and attempt < retries - 1:
+                time.sleep(delay * (attempt + 1))
+                continue
+            raise
 
 # Инициализация базы данных
 def init_db():
     try:
         print(f"[Party] Инициализация базы данных: {DATABASE}")
-        conn = sqlite3.connect(DATABASE)
+        conn = sqlite3.connect(DATABASE, timeout=30)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=30000")
         c = conn.cursor()
         
         # Таблица пати
@@ -63,18 +94,11 @@ def init_db():
         )''')
         
         conn.commit()
-        conn.close()
+        # conn closed by teardown
         print("[Party] База данных успешно инициализирована")
     except Exception as e:
         print(f"[Party] Ошибка инициализации базы данных: {e}")
         raise
-
-def get_db():
-    conn = sqlite3.connect(DATABASE, timeout=30, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=30000")
-    return conn
 
 # Создать пати
 @app.route('/party/create', methods=['POST'])
@@ -93,7 +117,7 @@ def create_party():
         # Проверяем, не состоит ли игрок уже в пати
         c.execute('SELECT party_id FROM party_members WHERE player_id = ?', (leader,))
         if c.fetchone():
-            conn.close()
+            # conn closed by teardown
             return jsonify({'error': 'Already in a party'}), 400
         
         # Создаем пати
@@ -104,7 +128,7 @@ def create_party():
         c.execute('INSERT INTO party_members (party_id, player_id) VALUES (?, ?)', (party_id, leader))
         
         conn.commit()
-        conn.close()
+        # conn closed by teardown
         
         return jsonify({'success': True, 'message': f'Party {name} created'})
     except sqlite3.IntegrityError:
@@ -131,7 +155,7 @@ def invite_player():
         party = c.fetchone()
         
         if not party:
-            conn.close()
+            # conn closed by teardown
             return jsonify({'error': 'You are not a party leader'}), 403
         
         party_id = party['id']
@@ -139,7 +163,7 @@ def invite_player():
         # Проверяем, не в пати ли уже целевой игрок
         c.execute('SELECT party_id FROM party_members WHERE player_id = ?', (target,))
         if c.fetchone():
-            conn.close()
+            # conn closed by teardown
             return jsonify({'error': 'Player already in a party'}), 400
         
         # Создаем приглашение
@@ -147,7 +171,7 @@ def invite_player():
                   (party_id, target))
         
         conn.commit()
-        conn.close()
+        # conn closed by teardown
         
         return jsonify({'success': True, 'message': f'Invited {target}'})
     except Exception as e:
@@ -172,7 +196,7 @@ def get_invites():
                      WHERE i.target_player = ?''', (player,))
         
         invites = [row['name'] for row in c.fetchall()]
-        conn.close()
+        # conn closed by teardown
         
         return jsonify({'invites': invites})
     except Exception as e:
@@ -195,7 +219,7 @@ def join_party():
         # Проверяем, не в пати ли уже игрок
         c.execute('SELECT party_id FROM party_members WHERE player_id = ?', (player,))
         if c.fetchone():
-            conn.close()
+            # conn closed by teardown
             return jsonify({'error': 'Already in a party'}), 400
         
         # Находим пати
@@ -203,7 +227,7 @@ def join_party():
         party = c.fetchone()
         
         if not party:
-            conn.close()
+            # conn closed by teardown
             return jsonify({'error': 'Party not found'}), 404
         
         party_id = party['id']
@@ -214,7 +238,7 @@ def join_party():
         invite = c.fetchone()
         
         if not invite:
-            conn.close()
+            # conn closed by teardown
             return jsonify({'error': 'No invite found'}), 403
         
         # Добавляем игрока в пати
@@ -225,7 +249,7 @@ def join_party():
         c.execute('DELETE FROM invites WHERE id = ?', (invite['id'],))
         
         conn.commit()
-        conn.close()
+        # conn closed by teardown
         
         return jsonify({'success': True, 'message': f'Joined party {party_name}'})
     except Exception as e:
@@ -251,7 +275,7 @@ def leave_party():
         result = c.fetchone()
         
         if not result:
-            conn.close()
+            # conn closed by teardown
             return jsonify({'error': 'Not in a party'}), 400
         
         party_id = result['party_id']
@@ -259,7 +283,7 @@ def leave_party():
         
         # Если игрок - лидер, запрещаем leave (должен использовать disband)
         if player == leader:
-            conn.close()
+            # conn closed by teardown
             return jsonify({'error': 'You are the leader. Use .party disband instead'}), 403
         
         # Удаляем игрока из пати
@@ -267,7 +291,7 @@ def leave_party():
                   (party_id, player))
         
         conn.commit()
-        conn.close()
+        # conn closed by teardown
         
         return jsonify({'success': True, 'message': 'Left party'})
     except Exception as e:
@@ -291,7 +315,7 @@ def disband_party():
         party = c.fetchone()
         
         if not party:
-            conn.close()
+            # conn closed by teardown
             return jsonify({'error': 'You are not a party leader'}), 403
         
         party_id = party['id']
@@ -309,7 +333,7 @@ def disband_party():
         c.execute('DELETE FROM parties WHERE id = ?', (party_id,))
         
         conn.commit()
-        conn.close()
+        # conn closed by teardown
         
         return jsonify({'success': True, 'message': 'Party disbanded'})
     except Exception as e:
@@ -334,7 +358,7 @@ def kick_player():
         party = c.fetchone()
         
         if not party:
-            conn.close()
+            # conn closed by teardown
             return jsonify({'error': 'You are not a party leader'}), 403
         
         party_id = party['id']
@@ -344,11 +368,11 @@ def kick_player():
                   (party_id, target))
         
         if c.rowcount == 0:
-            conn.close()
+            # conn closed by teardown
             return jsonify({'error': 'Player not in your party'}), 400
         
         conn.commit()
-        conn.close()
+        # conn closed by teardown
         
         return jsonify({'success': True, 'message': f'Kicked {target}'})
     except Exception as e:
@@ -373,7 +397,7 @@ def list_members():
                      WHERE pm1.player_id = ?''', (player,))
         
         members = [row['player_id'] for row in c.fetchall()]
-        conn.close()
+        # conn closed by teardown
         
         if not members:
             return jsonify({'error': 'Not in a party'}), 400
@@ -419,7 +443,7 @@ def get_party_state():
                 'z': row['z']
             })
         
-        conn.close()
+        # conn closed by teardown
         
         return jsonify({'members': members})
     except Exception as e:
@@ -441,7 +465,7 @@ def cleanup():
                      WHERE last_update < datetime('now', '-30 minutes')''')
         
         conn.commit()
-        conn.close()
+        # conn closed by teardown
         
         return jsonify({'success': True, 'message': 'Cleanup completed'})
     except Exception as e:
@@ -470,7 +494,7 @@ def add_waypoint():
         result = c.fetchone()
         
         if not result:
-            conn.close()
+            # conn closed by teardown
             return jsonify({'error': 'Not in a party'}), 400
         
         party_id = result['party_id']
@@ -488,7 +512,7 @@ def add_waypoint():
         waypoint_id = c.lastrowid
         
         conn.commit()
-        conn.close()
+        # conn closed by teardown
         
         # Запланировать удаление метки через 20 секунд
         import threading
@@ -496,11 +520,12 @@ def add_waypoint():
             import time
             time.sleep(20)
             try:
-                conn = get_db()
-                c = conn.cursor()
-                c.execute('DELETE FROM party_waypoints WHERE id = ?', (waypoint_id,))
-                conn.commit()
-                conn.close()
+                tmp_conn = sqlite3.connect(DATABASE, timeout=30)
+                tmp_conn.execute("PRAGMA journal_mode=WAL")
+                tmp_conn.execute("PRAGMA busy_timeout=30000")
+                tmp_conn.execute('DELETE FROM party_waypoints WHERE id = ?', (waypoint_id,))
+                tmp_conn.commit()
+                tmp_conn.close()
             except:
                 pass
         
@@ -528,7 +553,7 @@ def list_waypoints():
         result = c.fetchone()
         
         if not result:
-            conn.close()
+            # conn closed by teardown
             return jsonify({'waypoints': []})
         
         party_id = result['party_id']
@@ -563,7 +588,7 @@ def list_waypoints():
                 'timestamp': row['created_at']
             })
         
-        conn.close()
+        # conn closed by teardown
         
         return jsonify({'waypoints': waypoints})
     except Exception as e:
@@ -588,7 +613,7 @@ def remove_waypoint():
         result = c.fetchone()
         
         if not result:
-            conn.close()
+            # conn closed by teardown
             return jsonify({'error': 'Not in a party'}), 400
         
         party_id = result['party_id']
@@ -599,11 +624,11 @@ def remove_waypoint():
                   (party_id, name, player))
         
         if c.rowcount == 0:
-            conn.close()
+            # conn closed by teardown
             return jsonify({'error': 'Waypoint not found or not yours'}), 400
         
         conn.commit()
-        conn.close()
+        # conn closed by teardown
         
         return jsonify({'success': True, 'message': f'Waypoint {name} removed'})
     except Exception as e:
@@ -675,7 +700,7 @@ def get_stats():
                 'member_count': len(members)
             })
         
-        conn.close()
+        # conn closed by teardown
         
         return jsonify({
             'total_parties': total_parties,
