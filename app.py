@@ -203,6 +203,45 @@ def leave_party():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/party/quit', methods=['POST'])
+def quit_party():
+    """
+    Универсальный выход (вызывается клиентом при закрытии Minecraft).
+    Если игрок — лидер, пати распускается; иначе игрок просто выходит.
+    Если игрок не в пати — это не ошибка.
+    """
+    data = request.json or {}
+    player = data.get('player')
+    if not player:
+        return jsonify({'error': 'Missing player'}), 400
+
+    try:
+        conn = get_db()
+        c = conn.cursor()
+
+        c.execute('''SELECT pm.party_id, p.leader FROM party_members pm
+                     JOIN parties p ON pm.party_id = p.id
+                     WHERE pm.player_id = ?''', (player,))
+        row = c.fetchone()
+        if not row:
+            return jsonify({'success': True, 'message': 'Not in a party'})
+
+        party_id = row['party_id']
+        if player == row['leader']:
+            c.execute('DELETE FROM party_members WHERE party_id = ?', (party_id,))
+            c.execute('DELETE FROM party_waypoints WHERE party_id = ?', (party_id,))
+            c.execute('DELETE FROM parties WHERE id = ?', (party_id,))
+            conn.commit()
+            return jsonify({'success': True, 'message': 'Party disbanded (leader quit)'})
+        else:
+            c.execute('DELETE FROM party_members WHERE party_id = ? AND player_id = ?',
+                      (party_id, player))
+            conn.commit()
+            return jsonify({'success': True, 'message': 'Left party'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/party/disband', methods=['POST'])
 def disband_party():
     data = request.json or {}
@@ -493,6 +532,7 @@ def index():
             'POST /party/create',
             'POST /party/join',
             'POST /party/leave',
+            'POST /party/quit',
             'POST /party/disband',
             'POST /party/kick',
             'POST /party/list',
